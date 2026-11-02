@@ -14,9 +14,16 @@ public class LocationHub : Hub
     }
 
     // Create an independent sharing session
-    public SessionCredentials StartSharing()
+    public SessionCredentials StartSharing(string displayName)
     {
-        return _locationService.StartSession();
+        try
+        {
+            return _locationService.StartSession(displayName);
+        }
+        catch (ArgumentException ex)
+        {
+            throw new HubException(ex.Message);
+        }
     }
 
     // Receive and broadcast this owner's GPS coordinates
@@ -72,6 +79,12 @@ public class LocationHub : Hub
     public LocationData? GetLocation(string token)
     {
         return _locationService.GetLocation(token);
+    }
+
+    // Retrieve the display name belonging to this viewer token
+    public string? GetDisplayName(string token)
+    {
+        return _locationService.GetDisplayNameForViewer(token);
     }
 
     // Stop only this owner's sharing session

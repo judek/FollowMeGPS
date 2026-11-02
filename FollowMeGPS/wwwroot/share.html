@@ -47,16 +47,18 @@
             text-align: right;
         }
 
-        .green {
-            color: #16803c;
-        }
+        .green { color: #16803c; }
+        .yellow { color: #b77900; }
+        .red { color: #c62828; }
 
-        .yellow {
-            color: #b77900;
-        }
-
-        .red {
-            color: #c62828;
+        input {
+            width: 100%;
+            box-sizing: border-box;
+            padding: 12px;
+            margin: 8px 0;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            font-size: 16px;
         }
 
         button {
@@ -87,15 +89,6 @@
         #copyButton {
             background: #16803c;
             color: white;
-        }
-
-        #viewerLink {
-            width: 100%;
-            box-sizing: border-box;
-            padding: 10px;
-            margin-top: 8px;
-            border: 1px solid #ccc;
-            border-radius: 5px;
         }
 
         .small {
@@ -130,6 +123,14 @@
     <div class="panel">
         <h2>Location Sharing</h2>
 
+        <label for="displayName">Your Name</label>
+        <input
+            type="text"
+            id="displayName"
+            maxlength="50"
+            placeholder="Enter a name viewers will recognize"
+            autocomplete="name">
+
         <button id="startButton" onclick="startSharing()">
             Start Sharing
         </button>
@@ -143,6 +144,11 @@
 
     <div class="panel">
         <h2>Live Status</h2>
+
+        <div class="status-row">
+            <span>Sharing As</span>
+            <span id="sharingName" class="status-value">--</span>
+        </div>
 
         <div class="status-row">
             <span>GPS Status</span>
@@ -255,6 +261,15 @@
         async function startSharing() {
             clearError();
 
+            const displayName =
+                document.getElementById("displayName").value.trim();
+
+            if (!displayName) {
+                showError("Please enter a name before starting.");
+                document.getElementById("displayName").focus();
+                return;
+            }
+
             if (!navigator.geolocation) {
                 showError("This browser does not support GPS location.");
                 return;
@@ -288,10 +303,16 @@
 
                 updateConnectionStatus();
 
-                const session = await connection.invoke("StartSharing");
+                const session = await connection.invoke(
+                    "StartSharing",
+                    displayName
+                );
 
                 ownerToken = session.ownerToken;
                 viewerToken = session.viewerToken;
+
+                document.getElementById("sharingName").textContent =
+                    session.displayName;
 
                 const link = window.location.origin +
                     "/map.html?token=" +
@@ -329,6 +350,8 @@
                 }
 
                 connection = null;
+                ownerToken = null;
+                viewerToken = null;
                 updateConnectionStatus();
             }
         }
@@ -437,6 +460,8 @@
 
             setStatus(gpsStatus, "Stopped", "red");
             updateConnectionStatus();
+
+            document.getElementById("sharingName").textContent = "--";
 
             coordinates.textContent = "Sharing stopped.";
             warning.style.display = "none";

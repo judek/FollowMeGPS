@@ -8,8 +8,16 @@ public class LocationService
 {
     private readonly ConcurrentDictionary<string, SharingSession> _sessions = new();
 
-    public SessionCredentials StartSession()
+    public SessionCredentials StartSession(string displayName)
     {
+        displayName = displayName?.Trim() ?? string.Empty;
+
+        if (string.IsNullOrWhiteSpace(displayName))
+            throw new ArgumentException("A display name is required.");
+
+        if (displayName.Length > 50)
+            throw new ArgumentException("Display name cannot exceed 50 characters.");
+
         string ownerToken = GenerateToken();
         string viewerToken = GenerateToken();
 
@@ -18,6 +26,7 @@ public class LocationService
         var session = new SharingSession(
             ownerToken,
             viewerToken,
+            displayName,
             expiresAt);
 
         _sessions[ownerToken] = session;
@@ -25,6 +34,7 @@ public class LocationService
         return new SessionCredentials(
             ownerToken,
             viewerToken,
+            displayName,
             expiresAt);
     }
 
@@ -93,6 +103,12 @@ public class LocationService
             : null;
     }
 
+    public string? GetDisplayNameForViewer(string token)
+    {
+        var session = FindViewerSession(token);
+        return session?.DisplayName;
+    }
+
     public void StopSession(string token)
     {
         if (TryGetOwnerSession(token, out var session))
@@ -141,6 +157,7 @@ public class LocationService
     {
         public string OwnerToken { get; }
         public string ViewerToken { get; }
+        public string DisplayName { get; }
         public DateTime ExpiresAt { get; }
 
         public object SyncRoot { get; } = new();
@@ -150,10 +167,12 @@ public class LocationService
         public SharingSession(
             string ownerToken,
             string viewerToken,
+            string displayName,
             DateTime expiresAt)
         {
             OwnerToken = ownerToken;
             ViewerToken = viewerToken;
+            DisplayName = displayName;
             ExpiresAt = expiresAt;
         }
     }
@@ -162,6 +181,7 @@ public class LocationService
 public record SessionCredentials(
     string OwnerToken,
     string ViewerToken,
+    string DisplayName,
     DateTime ExpiresAt);
 
 public record LocationData(
