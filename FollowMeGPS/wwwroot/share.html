@@ -1,0 +1,499 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FollowMeGPS - Share Location</title>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/10.0.0/signalr.min.js"></script>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 30px auto;
+            padding: 20px;
+            background: #f4f6f8;
+            color: #222;
+        }
+
+        h1 {
+            text-align: center;
+        }
+
+        .panel {
+            background: white;
+            padding: 18px;
+            margin-bottom: 16px;
+            border-radius: 10px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+        }
+
+        .status-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 10px 0;
+            border-bottom: 1px solid #eee;
+        }
+
+        .status-row:last-child {
+            border-bottom: none;
+        }
+
+        .status-value {
+            font-weight: bold;
+            text-align: right;
+        }
+
+        .green {
+            color: #16803c;
+        }
+
+        .yellow {
+            color: #b77900;
+        }
+
+        .red {
+            color: #c62828;
+        }
+
+        button {
+            width: 100%;
+            padding: 14px;
+            margin: 6px 0;
+            border: none;
+            border-radius: 7px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        #startButton {
+            background: #1677d2;
+            color: white;
+        }
+
+        #stopButton {
+            background: #c62828;
+            color: white;
+        }
+
+        #copyButton {
+            background: #16803c;
+            color: white;
+        }
+
+        #viewerLink {
+            width: 100%;
+            box-sizing: border-box;
+            padding: 10px;
+            margin-top: 8px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+
+        .small {
+            font-size: 13px;
+            color: #666;
+        }
+
+        #warning {
+            display: none;
+            background: #fff3cd;
+            color: #856404;
+            padding: 12px;
+            border-radius: 7px;
+            margin-top: 12px;
+        }
+
+        #error {
+            display: none;
+            background: #f8d7da;
+            color: #842029;
+            padding: 12px;
+            border-radius: 7px;
+            margin-top: 12px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h1>FollowMeGPS</h1>
+
+    <div class="panel">
+        <h2>Location Sharing</h2>
+
+        <button id="startButton" onclick="startSharing()">
+            Start Sharing
+        </button>
+
+        <button id="stopButton" onclick="stopSharing()" disabled>
+            Stop Sharing
+        </button>
+
+        <div id="error"></div>
+    </div>
+
+    <div class="panel">
+        <h2>Live Status</h2>
+
+        <div class="status-row">
+            <span>GPS Status</span>
+            <span id="gpsStatus" class="status-value">Not started</span>
+        </div>
+
+        <div class="status-row">
+            <span>Server Connection</span>
+            <span id="connectionStatus" class="status-value">Disconnected</span>
+        </div>
+
+        <div class="status-row">
+            <span>Last GPS Reading</span>
+            <span id="lastGpsUpdate" class="status-value">Never</span>
+        </div>
+
+        <div class="status-row">
+            <span>Last Server Update</span>
+            <span id="lastServerUpdate" class="status-value">Never</span>
+        </div>
+
+        <div class="status-row">
+            <span>Time Since Server Update</span>
+            <span id="elapsedTime" class="status-value">--</span>
+        </div>
+
+        <div id="warning">
+            No recent location updates. The browser may have been suspended,
+            GPS may be unavailable, or the network connection may be interrupted.
+        </div>
+    </div>
+
+    <div class="panel">
+        <h2>Current Coordinates</h2>
+        <div id="coordinates">Waiting for GPS...</div>
+    </div>
+
+    <div class="panel">
+        <h2>Viewer Link</h2>
+
+        <p class="small">
+            Share this link with someone who wants to see your location.
+        </p>
+
+        <input type="text" id="viewerLink" readonly
+               placeholder="Start sharing to generate a link">
+
+        <button id="copyButton" onclick="copyViewerLink()" disabled>
+            Copy Viewer Link
+        </button>
+    </div>
+
+    <script>
+        let connection = null;
+        let ownerToken = null;
+        let viewerToken = null;
+        let watchId = null;
+
+        let lastGpsTime = null;
+        let lastServerTime = null;
+
+        let sharing = false;
+
+        const gpsStatus = document.getElementById("gpsStatus");
+        const connectionStatus = document.getElementById("connectionStatus");
+        const lastGpsUpdate = document.getElementById("lastGpsUpdate");
+        const lastServerUpdate = document.getElementById("lastServerUpdate");
+        const elapsedTime = document.getElementById("elapsedTime");
+        const coordinates = document.getElementById("coordinates");
+        const warning = document.getElementById("warning");
+        const error = document.getElementById("error");
+
+        function setStatus(element, message, color) {
+            element.textContent = message;
+            element.className = "status-value " + color;
+        }
+
+        function showError(message) {
+            error.textContent = message;
+            error.style.display = "block";
+        }
+
+        function clearError() {
+            error.textContent = "";
+            error.style.display = "none";
+        }
+
+        function updateConnectionStatus() {
+            if (!connection) {
+                setStatus(connectionStatus, "Disconnected", "red");
+                return;
+            }
+
+            switch (connection.state) {
+                case signalR.HubConnectionState.Connected:
+                    setStatus(connectionStatus, "Connected", "green");
+                    break;
+
+                case signalR.HubConnectionState.Connecting:
+                case signalR.HubConnectionState.Reconnecting:
+                    setStatus(connectionStatus, "Connecting...", "yellow");
+                    break;
+
+                default:
+                    setStatus(connectionStatus, "Disconnected", "red");
+                    break;
+            }
+        }
+
+        async function startSharing() {
+            clearError();
+
+            if (!navigator.geolocation) {
+                showError("This browser does not support GPS location.");
+                return;
+            }
+
+            document.getElementById("startButton").disabled = true;
+
+            try {
+                connection = new signalR.HubConnectionBuilder()
+                    .withUrl("/locationHub")
+                    .withAutomaticReconnect()
+                    .build();
+
+                connection.onreconnecting(() => {
+                    updateConnectionStatus();
+                });
+
+                connection.onreconnected(() => {
+                    updateConnectionStatus();
+                });
+
+                connection.onclose(() => {
+                    updateConnectionStatus();
+
+                    if (sharing) {
+                        showError("Server connection lost. Please try again.");
+                    }
+                });
+
+                await connection.start();
+
+                updateConnectionStatus();
+
+                const session = await connection.invoke("StartSharing");
+
+                ownerToken = session.ownerToken;
+                viewerToken = session.viewerToken;
+
+                const link = window.location.origin +
+                    "/map.html?token=" +
+                    encodeURIComponent(viewerToken);
+
+                document.getElementById("viewerLink").value = link;
+                document.getElementById("copyButton").disabled = false;
+
+                sharing = true;
+
+                document.getElementById("stopButton").disabled = false;
+
+                setStatus(gpsStatus, "Waiting for GPS...", "yellow");
+
+                watchId = navigator.geolocation.watchPosition(
+                    sendLocation,
+                    handleLocationError,
+                    {
+                        enableHighAccuracy: true,
+                        maximumAge: 0,
+                        timeout: 15000
+                    }
+                );
+
+            } catch (err) {
+                showError("Unable to start sharing: " + err.message);
+
+                document.getElementById("startButton").disabled = false;
+
+                if (connection) {
+                    try {
+                        await connection.stop();
+                    } catch {
+                    }
+                }
+
+                connection = null;
+                updateConnectionStatus();
+            }
+        }
+
+        async function sendLocation(position) {
+            if (!sharing) return;
+
+            const latitude = position.coords.latitude;
+            const longitude = position.coords.longitude;
+
+            lastGpsTime = new Date();
+
+            setStatus(gpsStatus, "Receiving GPS", "green");
+
+            lastGpsUpdate.textContent = lastGpsTime.toLocaleTimeString();
+
+            coordinates.innerHTML =
+                "Latitude: " + latitude.toFixed(6) +
+                "<br>Longitude: " + longitude.toFixed(6) +
+                "<br>Accuracy: " +
+                Math.round(position.coords.accuracy) + " meters";
+
+            if (!connection ||
+                connection.state !== signalR.HubConnectionState.Connected) {
+                updateConnectionStatus();
+                return;
+            }
+
+            try {
+                await connection.invoke(
+                    "UpdateLocation",
+                    ownerToken,
+                    latitude,
+                    longitude
+                );
+
+                lastServerTime = new Date();
+
+                lastServerUpdate.textContent =
+                    lastServerTime.toLocaleTimeString();
+
+                warning.style.display = "none";
+
+            } catch (err) {
+                console.error("Location update failed:", err);
+                showError("Unable to send location to server.");
+            }
+        }
+
+        function handleLocationError(err) {
+            setStatus(gpsStatus, "GPS Error", "red");
+
+            switch (err.code) {
+                case 1:
+                    showError("Location permission was denied.");
+                    break;
+
+                case 2:
+                    showError("GPS position is unavailable.");
+                    break;
+
+                case 3:
+                    showError("GPS request timed out. Waiting for another reading.");
+                    break;
+
+                default:
+                    showError("An unknown GPS error occurred.");
+                    break;
+            }
+        }
+
+        async function stopSharing() {
+            sharing = false;
+
+            if (watchId !== null) {
+                navigator.geolocation.clearWatch(watchId);
+                watchId = null;
+            }
+
+            if (connection &&
+                connection.state === signalR.HubConnectionState.Connected &&
+                ownerToken) {
+                try {
+                    await connection.invoke("StopSharing", ownerToken);
+                } catch (err) {
+                    console.error("Error stopping session:", err);
+                }
+            }
+
+            if (connection) {
+                try {
+                    await connection.stop();
+                } catch {
+                }
+            }
+
+            connection = null;
+            ownerToken = null;
+            viewerToken = null;
+
+            document.getElementById("startButton").disabled = false;
+            document.getElementById("stopButton").disabled = true;
+            document.getElementById("copyButton").disabled = true;
+
+            document.getElementById("viewerLink").value = "";
+
+            setStatus(gpsStatus, "Stopped", "red");
+            updateConnectionStatus();
+
+            coordinates.textContent = "Sharing stopped.";
+            warning.style.display = "none";
+
+            clearError();
+        }
+
+        async function copyViewerLink() {
+            const link = document.getElementById("viewerLink").value;
+
+            if (!link) return;
+
+            try {
+                await navigator.clipboard.writeText(link);
+                document.getElementById("copyButton").textContent = "Copied!";
+            } catch {
+                document.getElementById("viewerLink").select();
+                document.execCommand("copy");
+                document.getElementById("copyButton").textContent = "Copied!";
+            }
+        }
+
+        function updateElapsedTime() {
+            if (!lastServerTime || !sharing) {
+                elapsedTime.textContent = "--";
+                return;
+            }
+
+            const seconds = Math.floor(
+                (Date.now() - lastServerTime.getTime()) / 1000
+            );
+
+            if (seconds < 60) {
+                elapsedTime.textContent = seconds + " seconds";
+            } else {
+                const minutes = Math.floor(seconds / 60);
+                elapsedTime.textContent = minutes + " minute(s)";
+            }
+
+            if (seconds > 30) {
+                warning.style.display = "block";
+                setStatus(gpsStatus, "No recent update", "yellow");
+            } else {
+                warning.style.display = "none";
+
+                if (lastGpsTime) {
+                    setStatus(gpsStatus, "Receiving GPS", "green");
+                }
+            }
+        }
+
+        setInterval(() => {
+            updateElapsedTime();
+            updateConnectionStatus();
+        }, 1000);
+
+    </script>
+
+</body>
+</html>

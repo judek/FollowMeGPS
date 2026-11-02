@@ -1,0 +1,124 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <title>FollowMeGPS - Live Location</title>
+
+    <link rel="stylesheet"
+          href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/10.0.0/signalr.min.js"></script>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            background: #f3f5f8;
+        }
+
+        header {
+            padding: 15px;
+            background: #2563eb;
+            color: white;
+            text-align: center;
+        }
+
+        #status {
+            padding: 12px;
+            text-align: center;
+            background: white;
+        }
+
+        #map {
+            height: calc(100vh - 120px);
+            width: 100%;
+        }
+    </style>
+</head>
+
+<body>
+
+<header>
+    <h2>FollowMeGPS</h2>
+    <div>Live Location</div>
+</header>
+
+<div id="status">Connecting to location...</div>
+
+<div id="map"></div>
+
+<script>
+
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("token");
+
+    const statusElement = document.getElementById("status");
+
+    if (!token) {
+        statusElement.innerText = "Invalid sharing link.";
+        throw new Error("Missing viewer token.");
+    }
+
+    // Initialize map
+    const map = L.map("map").setView([27.9, -82.5], 10);
+
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    let marker = null;
+
+    // Connect to SignalR
+    const connection = new signalR.HubConnectionBuilder()
+        .withUrl("/locationHub")
+        .withAutomaticReconnect()
+        .build();
+
+    connection.on("LocationUpdated", (latitude, longitude, updatedAt) => {
+
+        const position = [latitude, longitude];
+
+        if (marker === null) {
+            marker = L.marker(position).addTo(map);
+        } else {
+            marker.setLatLng(position);
+        }
+
+        map.setView(position, 15);
+
+        statusElement.innerText =
+            "Location updated: " + new Date(updatedAt).toLocaleTimeString();
+    });
+
+    connection.on("SharingStopped", () => {
+        statusElement.innerText = "Location sharing has ended.";
+    });
+
+    async function connect() {
+        try {
+            await connection.start();
+
+            const joined = await connection.invoke("JoinSession", token);
+
+            if (joined) {
+                statusElement.innerText = "Connected. Waiting for location...";
+            } else {
+                statusElement.innerText = "Sharing session is invalid or expired.";
+            }
+
+        } catch (error) {
+            statusElement.innerText = "Connection error: " + error.message;
+        }
+    }
+
+    connect();
+
+</script>
+
+</body>
+</html>

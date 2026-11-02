@@ -1,0 +1,21 @@
+
+# Build output
+**/bin/
+**/obj/
+publish/
+
+# IDE
+.vscode/
+.vs/
+
+# Backups
+*.bak
+*.tar.gz
+
+# User-specific files
+*.user
+*.suo
+
+# Local configuration and secrets
+.env
+appsettings.Development.json
